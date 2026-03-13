@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SehatSetu — Doctor Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <a href="../index.html" class="navbar-brand">🏥 SehatSetu</a>
+        <div class="navbar-right">
+            <span class="online-indicator"><span class="status-dot online"></span> Online</span>
+            <span id="user-email" style="font-size: 0.8rem; color: var(--text-muted);"></span>
+            <button class="btn btn-outline" style="padding: 0.5rem 1rem; font-size: 0.8rem;" onclick="logout()" id="logout-btn">Logout</button>
+        </div>
+    </nav>
+
+    <div id="offline-banner" class="offline-banner hidden">
+        ⚠️ Offline mode — showing cached patient records. New updates require internet.
+    </div>
+
+    <main class="container" style="padding-top: 1.5rem; padding-bottom: 3rem; max-width: 900px;">
+        <!-- Stats Bar -->
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+            <div class="card" style="flex: 1; min-width: 130px; text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 800; color: var(--red);" id="stat-red">0</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">URGENT</div>
+            </div>
+            <div class="card" style="flex: 1; min-width: 130px; text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 800; color: var(--yellow);" id="stat-yellow">0</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">MODERATE</div>
+            </div>
+            <div class="card" style="flex: 1; min-width: 130px; text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 800; color: var(--green);" id="stat-green">0</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">MILD</div>
+            </div>
+            <div class="card" style="flex: 1; min-width: 130px; text-align: center; padding: 1rem;">
+                <div style="font-size: 2rem; font-weight: 800; color: var(--accent);" id="stat-total">0</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">TOTAL</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+            <h1 style="font-size: 1.25rem; font-weight: 800;">Patient Queue</h1>
+            <div style="display: flex; gap: 0.5rem;">
+                <select id="status-filter" class="form-control" style="width: auto; padding: 0.5rem 1rem; font-size: 0.85rem;">
+                    <option value="Pending">Pending</option>
+                    <option value="Resolved">Resolved</option>
+                </select>
+                <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick="loadConsultations()" id="refresh-btn">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <!-- Patient Queue -->
+        <div id="patient-queue">
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <p class="mt-2">Loading patients...</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Patient Detail Modal -->
+    <div id="patient-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-patient-name">Patient Details</h2>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+
+    <script src="../js/app.js"></script>
+    <script src="../js/offline-db.js"></script>
+    <script src="../js/sync.js"></script>
+    <script>
+        // Supabase Realtime client
+        const sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        let realtimeChannel = null;
+        // Handle OAuth callback if redirected here with token
+        if (!handleAuthCallback('doctor')) {
+            // Auth check — redirect to login if no token
+            if (!getAuthToken()) {
+                window.location.href = 'login.html';
+            } else {
+                // Verify role on every dashboard load
+                enforceRole('doctor').then(ok => {
+                    if (!ok) window.location.href = 'login.html';
+                });
+            }
+        }
+        const user = getCurrentUser();
+        if (user) {
+            document.getElementById('user-email').textContent = localStorage.getItem('sehatsetu_name') || user.email;
+        }
+
+        let allConsultations = [];
+
+        function getPatientId(consultation) {
+            return consultation?.patient_id || consultation?.patients?.id || null;
+        }
+
+        function renderHistoryList(consultations, sourceLabel = '') {
+            if (!Array.isArray(consultations) || consultations.length <= 1) {
+                return `<p style="color: var(--text-muted); font-size: 0.85rem;">No previous consultations${sourceLabel ? ' in ' + sourceLabel : ''}.</p>`;
+            }
+
+            return consultations.map(h => `
+                <div style="padding: 0.5rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;">
+                    <span class="badge badge-${h.ai_priority === 'RED' ? 'red' : h.ai_priority === 'GREEN' ? 'green' : 'yellow'}" style="font-size:0.65rem;">${h.ai_priority || 'YELLOW'}</span>
+                    ${((h.raw_symptoms || 'No symptoms recorded').substring(0, 50))} — <em>${formatTime(h.created_at)}</em>
+                    ${h.prescription ? ' • 💊 Rx saved' : ''}
+                    ${h.status === 'Resolved' ? ' ✅' : ''}
+                </div>
+            `).join('');
+        }
+
+        async function prefetchPatientHistories(consultations) {
+            const patientIds = [...new Set((consultations || []).map(getPatientId).filter(Boolean))];
+            await Promise.allSettled(patientIds.map(async patientId => {
+                const history = await apiFetch(`/api/patients/${patientId}/history`);
+                await cachePatientHistory(patientId, history);
+            }));
+        }
+
+        async function loadConsultations() {
+            const queue = document.getElementById('patient-queue');
+            const status = document.getElementById('status-filter').value;
+
+            queue.innerHTML = '<div class="loading-state"><div class="spinner"></div><p class="mt-2">Loading...</p></div>';
+
+            try {
+                allConsultations = await apiFetch(`/api/consultations?status=${status}`);
+                await cacheConsultations(allConsultations);
+                renderQueue(allConsultations);
+                prefetchPatientHistories(allConsultations);
+            } catch (err) {
+                const cached = await getCachedConsultations(status);
+                if (cached.length > 0) {
+                    allConsultations = cached;
+                    renderQueue(cached);
+                    showToast('Offline mode: showing cached patient records', 'error');
+                } else {
+                    queue.innerHTML = `<div class="empty-state"><p>❌ ${err.message}</p><p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;">No cached records available yet for offline access.</p></div>`;
+                }
+            }
+        }
+
+        function renderQueue(data) {
+            const queue = document.getElementById('patient-queue');
+            
+            // Update stats
+            const red = data.filter(c => c.ai_priority === 'RED').length;
+            const yellow = data.filter(c => c.ai_priority === 'YELLOW').length;
+            const green = data.filter(c => c.ai_priority === 'GREEN').length;
+            document.getElementById('stat-red').textContent = red;
+            document.getElementById('stat-yellow').textContent = yellow;
+            document.getElementById('stat-green').textContent = green;
+            document.getElementById('stat-total').textContent = data.length;
+
+            if (data.length === 0) {
+                queue.innerHTML = '<div class="empty-state"><p style="font-size:2rem;">📋</p><p>No patients in queue</p></div>';
+                return;
+            }
+
+            // Group by priority
+            const groups = { RED: [], YELLOW: [], GREEN: [] };
+            data.forEach(c => {
+                const p = c.ai_priority || 'YELLOW';
+                if (groups[p]) groups[p].push(c);
+            });
+
+            let html = '';
+            const labels = {
+                RED: { label: '🔴 Urgent Cases', css: 'red' },
+                YELLOW: { label: '🟡 Moderate Cases', css: 'yellow' },
+                GREEN: { label: '🟢 Mild Cases', css: 'green' }
+            };
+
+            for (const [priority, items] of Object.entries(groups)) {
+                if (items.length === 0) continue;
+                const { label, css } = labels[priority];
+
+                html += `<div class="priority-section">`;
+                html += `<div class="priority-header ${css}">${label} (${items.length})</div>`;
+
+                items.forEach(c => {
+                    const patient = c.patients || {};
+                    const phone = patient.phone || '';
+                    const phoneLink = phone ? `<a href="tel:${phone}" class="btn btn-call">📞 Call</a>` : '';
+
+                    html += `
+                        <div class="patient-card" onclick="openPatientModal('${c.id}')" style="cursor:pointer;">
+                            <div class="patient-card-left">
+                                <div class="patient-name">${patient.name || 'Unknown'}</div>
+                                <div class="patient-meta">
+                                    ${patient.age ? patient.age + 'y' : ''} • ${patient.village || 'Unknown village'} • ${formatTime(c.created_at)}
+                                    ${c.source === 'sms' ? ' • 💬 SMS' : ''}
+                                </div>
+                                <div class="patient-symptoms">${c.raw_symptoms}</div>
+                                <div class="patient-ai">AI: ${c.ai_summary || 'No summary'}</div>
+                            </div>
+                            <div class="patient-card-actions" onclick="event.stopPropagation()">
+                                ${phoneLink}
+                                <span class="badge badge-${css}">${priority}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `</div>`;
+            }
+
+            queue.innerHTML = html;
+        }
+
+        function openPatientModal(consultationId) {
+            const c = allConsultations.find(x => x.id === consultationId);
+            if (!c) return;
+
+            const patient = c.patients || {};
+            const phone = patient.phone || '';
+            const village = patient.village || '';
+
+            document.getElementById('modal-patient-name').textContent = patient.name || 'Patient Details';
+
+            document.getElementById('modal-content').innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+                    <div><strong>Age:</strong> ${patient.age || 'N/A'}</div>
+                    <div><strong>Gender:</strong> ${patient.gender || 'N/A'}</div>
+                    <div><strong>Village:</strong> ${village || 'N/A'}</div>
+                    <div><strong>Phone:</strong> ${phone || 'N/A'}</div>
+                    <div><strong>Source:</strong> ${c.source === 'sms' ? '💬 SMS' : '📱 App'}</div>
+                    <div><strong>Submitted:</strong> ${formatTime(c.created_at)}</div>
+                </div>
+
+                <div class="card mb-2" style="background: var(--bg);">
+                    <h4 style="margin-bottom: 0.5rem;">Symptoms</h4>
+                    <p>${c.raw_symptoms}</p>
+                </div>
+
+                <div class="card mb-2" style="background: var(--bg);">
+                    <h4 style="margin-bottom: 0.5rem;">AI Assessment</h4>
+                    <span class="badge badge-${c.ai_priority === 'RED' ? 'red' : c.ai_priority === 'GREEN' ? 'green' : 'yellow'}">${c.ai_priority}</span>
+                    <p class="mt-1">${c.ai_summary || 'No AI summary available'}</p>
+                </div>
+
+                <!-- Village Medicine Availability -->
+                <div class="card mb-2" style="background: var(--bg);">
+                    <h4 style="margin-bottom: 0.5rem;">💊 Medicine Availability ${village ? '— ' + village : ''}</h4>
+                    <div id="village-medicines"><div class="spinner mt-1"></div></div>
+                </div>
+
+                ${phone ? `<a href="tel:${phone}" class="btn btn-primary btn-block mb-2">📞 Call Patient</a>` : ''}
+
+                <div class="form-group">
+                    <label for="doctor-notes">Doctor Notes</label>
+                    <textarea id="doctor-notes" class="form-control" rows="3" placeholder="Add your notes...">${c.doctor_notes || ''}</textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="prescription">Prescription</label>
+                    <textarea id="prescription" class="form-control" rows="2" placeholder="Prescribe medicines..." oninput="clearAvailabilityCheck()">${c.prescription || ''}</textarea>
+                    <div id="availability-status" style="margin-top:0.5rem;"></div>
+                </div>
+
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-outline" style="flex:1; min-width: 140px;" onclick="checkPrescriptionAvailability('${village || 'Nabha'}')">🔍 Check Availability</button>
+                    <button class="btn btn-primary" style="flex:1; min-width: 100px;" onclick="saveNotes('${c.id}')">💾 Save</button>
+                    ${c.status === 'Pending' ? `<button class="btn btn-accent" style="flex:1; min-width: 100px;" onclick="resolveCase('${c.id}', '${village || 'Nabha'}')">✅ Resolve & SMS</button>` : ''}
+                </div>
+
+                <div class="mt-3">
+                    <h4 style="margin-bottom: 0.5rem;">📋 Patient History</h4>
+                    <div id="patient-history"><div class="spinner mt-2"></div></div>
+                </div>
+            `;
+
+            document.getElementById('patient-modal').classList.remove('hidden');
+            loadPatientHistory(patient.id || c.patient_id);
+            if (village) loadVillageMedicines(village);
+            else document.getElementById('village-medicines').innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No village specified for this patient.</p>';
+        }
+
+        /** Fetch medicine availability for a village and subscribe to realtime updates */
+        async function loadVillageMedicines(village) {
+            const el = document.getElementById('village-medicines');
+            try {
+                const medicines = await apiFetch(`/api/pharmacy/medicines?village=${encodeURIComponent(village)}`);
+                renderVillageMedicines(medicines);
+                subscribeToMedicineUpdates(village);
+            } catch {
+                el.innerHTML = navigator.onLine
+                    ? '<p style="color:var(--text-muted);font-size:0.85rem;">No pharmacy registered in this village.</p>'
+                    : '<p style="color:var(--text-muted);font-size:0.85rem;">Medicine stock data is unavailable offline.</p>';
+            }
+        }
+
+        function renderVillageMedicines(medicines) {
+            const el = document.getElementById('village-medicines');
+            if (!medicines || medicines.length === 0) {
+                el.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No pharmacy registered in this village.</p>';
+                return;
+            }
+            el.innerHTML = medicines.map(m => `
+                <div id="doc-med-${m.id}" style="display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+                    <span>${m.medicine_name}</span>
+                    <span class="badge badge-${m.is_in_stock ? 'green' : 'red'}" style="font-size:0.7rem;">
+                        ${m.is_in_stock ? '✅ Available' : '⚠️ OUT OF STOCK'}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        /** Supabase Realtime — live updates when pharmacist toggles stock */
+        function subscribeToMedicineUpdates(village) {
+            // Unsubscribe previous channel
+            if (realtimeChannel) {
+                sbClient.removeChannel(realtimeChannel);
+            }
+
+            realtimeChannel = sbClient
+                .channel('medicine-updates')
+                .on('postgres_changes',
+                    { event: 'UPDATE', schema: 'public', table: 'medicines' },
+                    (payload) => {
+                        const updated = payload.new;
+                        const el = document.getElementById(`doc-med-${updated.id}`);
+                        if (el) {
+                            const badge = el.querySelector('.badge');
+                            badge.className = `badge badge-${updated.is_in_stock ? 'green' : 'red'}`;
+                            badge.style.fontSize = '0.7rem';
+                            badge.textContent = updated.is_in_stock ? '✅ Available' : '⚠️ OUT OF STOCK';
+                            // Flash animation
+                            el.style.background = updated.is_in_stock ? '#d4edda' : '#f8d7da';
+                            setTimeout(() => el.style.background = '', 1500);
+                            showToast(`💊 ${updated.medicine_name} → ${updated.is_in_stock ? 'IN STOCK' : 'OUT OF STOCK'}`, updated.is_in_stock ? 'success' : 'error');
+                        }
+                    }
+                )
+                .subscribe();
+        }
+
+        async function loadPatientHistory(patientId) {
+            const historyEl = document.getElementById('patient-history');
+            try {
+                const data = await apiFetch(`/api/patients/${patientId}/history`);
+                await cachePatientHistory(patientId, data);
+                historyEl.innerHTML = renderHistoryList(data.consultations);
+            } catch {
+                const cached = await getCachedPatientHistory(patientId);
+                if (cached) {
+                    historyEl.innerHTML = renderHistoryList(cached.consultations, 'cached history');
+                    return;
+                }
+                historyEl.innerHTML = '<p style="color: var(--text-muted);">Could not load history and no cached copy is available.</p>';
+            }
+        }
+
+        async function saveNotes(consultationId) {
+            const notes = document.getElementById('doctor-notes').value;
+            const prescription = document.getElementById('prescription').value;
+
+            try {
+                const updated = await apiFetch(`/api/consultations/${consultationId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ doctor_notes: notes, prescription })
+                });
+                const existing = allConsultations.find(item => item.id === consultationId) || {};
+                const merged = { ...existing, ...updated, patients: existing.patients || updated.patients };
+                await cacheConsultation(merged);
+                const index = allConsultations.findIndex(item => item.id === consultationId);
+                if (index >= 0) allConsultations[index] = merged;
+                showToast('Notes saved!');
+            } catch (err) {
+                showToast('Failed to save: ' + err.message, 'error');
+            }
+        }
+
+        async function resolveCase(consultationId, patientVillage) {
+            try {
+                const notes = document.getElementById('doctor-notes').value;
+                const prescription = document.getElementById('prescription').value;
+
+                if (!prescription.trim()) {
+                    showToast('Please enter a prescription before resolving', 'error');
+                    return;
+                }
+
+                const result = await apiFetch(`/api/consultations/${consultationId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: 'Resolved', doctor_notes: notes, prescription })
+                });
+
+                const existing = allConsultations.find(item => item.id === consultationId) || {};
+                const merged = { ...existing, ...result, patients: existing.patients || result.patients };
+                await cacheConsultation(merged);
+
+                // Show SMS confirmation with availability info
+                if (result._sms_sent) {
+                    const avail = result._availability || {};
+                    if (avail.is_local) {
+                        showToast(`✅ Resolved! SMS sent → Pickup at ${avail.pharmacy_name}`, 'success');
+                    } else if (avail.found) {
+                        showToast(`✅ Resolved! SMS sent → Available at ${avail.pharmacy_village} (${avail.distance_km}km)`, 'success');
+                    } else {
+                        showToast('✅ Resolved! SMS sent with prescription.', 'success');
+                    }
+                } else if (result._sms_error) {
+                    showToast(`✅ Resolved! (SMS failed: ${result._sms_error})`, 'error');
+                } else {
+                    showToast('✅ Case resolved!');
+                }
+
+                closeModal();
+                loadConsultations();
+            } catch (err) {
+                showToast('Failed: ' + err.message, 'error');
+            }
+        }
+
+        /** Check prescription availability before resolving */
+        async function checkPrescriptionAvailability(village) {
+            const prescription = document.getElementById('prescription').value.trim();
+            const statusEl = document.getElementById('availability-status');
+
+            if (!prescription) {
+                statusEl.innerHTML = '<p style="color:var(--red);font-size:0.85rem;">⚠️ Enter a prescription first.</p>';
+                return;
+            }
+
+            statusEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;"></div>';
+
+            try {
+                const result = await apiFetch('/api/consultations/check-availability', {
+                    method: 'POST',
+                    body: JSON.stringify({ prescription, village })
+                });
+
+                if (!result.medicines || result.medicines.length === 0) {
+                    statusEl.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No medicines found in prescription.</p>';
+                    return;
+                }
+
+                let html = '';
+                for (const med of result.medicines) {
+                    if (!med.found) {
+                        html += `<div style="padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+                            <span>❌ <strong>${med.medicine}</strong></span>
+                            <span style="color:var(--red);"> — Not available anywhere</span>
+                        </div>`;
+                    } else if (med.is_local) {
+                        html += `<div style="padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+                            <span>✅ <strong>${med.medicine}</strong></span>
+                            <span style="color:var(--green);"> — Available in ${med.pharmacy_village}</span>
+                        </div>`;
+                    } else {
+                        html += `<div style="padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;background:var(--yellow-bg);margin:-0.35rem -0.5rem;padding:0.5rem;">
+                            <span>⚠️ <strong>${med.medicine}</strong></span>
+                            <span style="color:#E65100;"> — Out of stock in ${village}!</span>
+                            <br><span style="font-size:0.8rem;color:var(--text-muted);">📍 Available at: <strong>${med.pharmacy_name}</strong>, ${med.pharmacy_village} (${med.distance_km}km away)</span>
+                        </div>`;
+                    }
+                }
+
+                statusEl.innerHTML = `<div style="background:var(--bg);border-radius:var(--radius-sm);padding:0.5rem;margin-top:0.5rem;">
+                    <h5 style="font-size:0.8rem;margin-bottom:0.5rem;color:var(--text-muted);">💊 AVAILABILITY CHECK</h5>
+                    ${html}
+                </div>`;
+
+            } catch (err) {
+                statusEl.innerHTML = `<p style="color:var(--red);font-size:0.85rem;">Failed to check: ${err.message}</p>`;
+            }
+        }
+
+        /** Clear availability check when prescription changes */
+        function clearAvailabilityCheck() {
+            const statusEl = document.getElementById('availability-status');
+            if (statusEl) statusEl.innerHTML = '';
+        }
+
+        function closeModal() {
+            document.getElementById('patient-modal').classList.add('hidden');
+            // Clean up realtime subscription
+            if (realtimeChannel) {
+                sbClient.removeChannel(realtimeChannel);
+                realtimeChannel = null;
+            }
+        }
+
+        async function logout() {
+            await supabaseSignOut();
+            window.location.href = 'login.html';
+        }
+
+        // Filter change
+        document.getElementById('status-filter').addEventListener('change', loadConsultations);
+
+        // Click outside modal to close
+        document.getElementById('patient-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeModal();
+        });
+
+        // Load on start
+        loadConsultations();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadConsultations, 30000);
+
+        window.addEventListener('online', loadConsultations);
+
+        // Prevent back-button bypass after logout
+        window.addEventListener('pageshow', (e) => {
+            if (e.persisted && !getAuthToken()) {
+                window.location.href = 'login.html';
+            }
+        });
+    </script>
+</body>
+</html>
