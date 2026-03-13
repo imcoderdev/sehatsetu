@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SehatSetu — Rural Healthcare Triage System connecting ASHA workers, doctors, and pharmacists for faster healthcare delivery in villages.">
+    <title>SehatSetu — Village Health, Connected</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2E7D32">
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <h1>🏥 SehatSetu</h1>
+            <p>Bridging rural health — AI-powered triage connecting village health workers, doctors, and pharmacists at Nabha Civil Hospital.</p>
+            <p style="font-size: 0.9rem; opacity: 0.8;">Serving 173 villages • 11 Doctors • Offline-ready</p>
+        </div>
+    </section>
+
+    <!-- Role Cards -->
+    <section style="padding: 3rem 1rem; background: var(--bg);">
+        <div class="container">
+            <h2 class="text-center mb-4" style="font-size: 1.5rem; font-weight: 700;">Choose Your Role</h2>
+            <div class="role-cards">
+                <!-- ASHA Worker -->
+                <div class="role-card">
+                    <div class="role-card-icon">👩‍⚕️</div>
+                    <h3>ASHA Worker</h3>
+                    <p>Register patient symptoms from your village. Works offline — data syncs when internet returns.</p>
+                    <a href="asha/intake.html" class="btn btn-primary btn-block btn-lg" id="btn-asha">
+                        Register Patient
+                    </a>
+                </div>
+
+                <!-- Doctor -->
+                <div class="role-card">
+                    <div class="role-card-icon">🩺</div>
+                    <h3>Doctor</h3>
+                    <p>View AI-prioritized patient queue. Call patients, add notes, and manage consultations.</p>
+                    <a href="doctor/login.html" class="btn btn-accent btn-block btn-lg" id="btn-doctor">
+                        Doctor Login
+                    </a>
+                </div>
+
+                <!-- Pharmacist -->
+                <div class="role-card">
+                    <div class="role-card-icon">💊</div>
+                    <h3>Pharmacist</h3>
+                    <p>Update medicine availability so doctors know what's in stock before prescribing.</p>
+                    <a href="pharmacy/login.html" class="btn btn-outline btn-block btn-lg" id="btn-pharmacy">
+                        Pharmacy Login
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+        <div class="container">
+            <h2 class="text-center mb-4" style="font-size: 1.5rem; font-weight: 700;">How It Works</h2>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <h4>📱 Offline-First</h4>
+                    <p>ASHA workers can register patients even without internet. Data syncs automatically when connection returns.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🤖 AI Triage</h4>
+                    <p>Google Gemini AI analyzes symptoms and assigns urgency — RED, YELLOW, or GREEN priority.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📋 Doctor Queue</h4>
+                    <p>Doctors see a live prioritized patient queue with one-tap calling and note-taking.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>💬 SMS Intake</h4>
+                    <p>Patients without smartphones can text symptoms via SMS and get added to the doctor queue automatically.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>💊 Pharmacy Stock</h4>
+                    <p>Real-time medicine availability prevents doctors from prescribing out-of-stock medicines.</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🔒 Secure</h4>
+                    <p>JWT authentication for doctors and pharmacists. Row-level security on all patient data.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer style="text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;">
+        <p>SehatSetu — Built for Nabha Civil Hospital, Punjab</p>
+        <p class="mt-1">Reducing unnecessary hospital visits through AI-powered rural healthcare triage.</p>
+    </footer>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+    </script>
+</body>
+</html>

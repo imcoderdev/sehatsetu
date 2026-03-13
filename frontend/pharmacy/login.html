@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SehatSetu — Pharmacy Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="../index.html" class="navbar-brand">🏥 SehatSetu</a>
+    </nav>
+
+    <main class="container-sm" style="padding-top: 3rem;">
+        <div class="card" style="padding: 2rem;">
+            <h1 class="text-center" style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">💊 Pharmacy Login</h1>
+            <p class="text-center" style="color: var(--text-muted); margin-bottom: 1.5rem;">Sign in to manage medicine inventory</p>
+
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" class="form-control" placeholder="pharmacist@example.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" class="form-control" placeholder="Enter password" required>
+                </div>
+
+                <div id="error-msg" class="hidden" style="color: var(--red); font-size: 0.875rem; margin-bottom: 1rem; text-align: center;"></div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-lg" id="login-btn">
+                    Sign In
+                </button>
+            </form>
+
+            <div style="display: flex; align-items: center; margin: 1.25rem 0; gap: 0.75rem;">
+                <div style="flex: 1; height: 1px; background: var(--border);"></div>
+                <span style="color: var(--text-muted); font-size: 0.8rem; font-weight: 600;">OR</span>
+                <div style="flex: 1; height: 1px; background: var(--border);"></div>
+            </div>
+
+            <button class="btn btn-outline btn-block btn-lg" id="google-btn" onclick="supabaseSignInWithGoogle()" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                Sign in with Google
+            </button>
+        </div>
+    </main>
+
+    <script src="../js/app.js"></script>
+    <script>
+        const REQUIRED_ROLE = 'pharmacist';
+
+        // Handle OAuth callback with role check
+        if (handleAuthCallback(REQUIRED_ROLE)) {
+            // Callback is being processed, wait for redirect
+        } else if (getAuthToken()) {
+            // Verify role before auto-redirect
+            enforceRole(REQUIRED_ROLE).then(ok => {
+                if (ok) window.location.href = 'dashboard.html';
+            });
+        }
+
+        const form = document.getElementById('login-form');
+        const loginBtn = document.getElementById('login-btn');
+        const errorMsg = document.getElementById('error-msg');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            loginBtn.disabled = true;
+            loginBtn.textContent = '⏳ Signing in...';
+            errorMsg.classList.add('hidden');
+
+            try {
+                const session = await supabaseSignIn(
+                    document.getElementById('email').value,
+                    document.getElementById('password').value
+                );
+
+                // Check role whitelist
+                const profile = await checkUserRole(session.user.email);
+                if (!profile || profile.role !== REQUIRED_ROLE) {
+                    clearAuthSession();
+                    throw new Error('403 Unauthorized: Pharmacy License Verification Failed');
+                }
+                localStorage.setItem('sehatsetu_role', profile.role);
+                localStorage.setItem('sehatsetu_name', profile.name || '');
+                window.location.href = 'dashboard.html';
+            } catch (err) {
+                errorMsg.textContent = err.message;
+                errorMsg.classList.remove('hidden');
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Sign In';
+            }
+        });
+    </script>
+</body>
+</html>

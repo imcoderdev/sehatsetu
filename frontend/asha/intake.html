@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SehatSetu — Register Patient</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../css/styles.css">
+    <link rel="manifest" href="../manifest.json">
+    <meta name="theme-color" content="#2E7D32">
+
+    <!-- ============================================================
+         INLINE STYLES for ASHA-specific components:
+         Language toggle, mic button, read-aloud, and offline warning.
+         Kept inline to avoid polluting the shared styles.css.
+    ============================================================ -->
+    <style>
+        /* ── Language Toggle Switch ── */
+        .lang-toggle-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.625rem;
+            padding: 0.5rem 0;
+            font-weight: 700;
+            font-size: 0.9rem;
+            user-select: none;
+        }
+        .lang-toggle-bar span { color: var(--text-muted); transition: color 0.2s; }
+        .lang-toggle-bar span.active-lang { color: var(--primary); }
+
+        .lang-switch {
+            position: relative;
+            width: 48px; height: 26px;
+            flex-shrink: 0;
+        }
+        .lang-switch input { opacity: 0; width: 0; height: 0; }
+        .lang-slider {
+            position: absolute; inset: 0;
+            background: var(--primary);
+            border-radius: 26px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .lang-slider::before {
+            content: '';
+            position: absolute;
+            width: 20px; height: 20px;
+            left: 3px; bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .lang-switch input:checked + .lang-slider { background: #FF9800; }
+        .lang-switch input:checked + .lang-slider::before { transform: translateX(22px); }
+
+        /* ── Microphone / Voice Input Button ── */
+        .symptom-input-wrapper {
+            position: relative;
+        }
+        .mic-btn {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            width: 42px; height: 42px;
+            border-radius: 50%;
+            border: 2px solid var(--primary);
+            background: var(--green-bg);
+            color: var(--primary);
+            font-size: 1.25rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 2;
+        }
+        .mic-btn:hover:not(:disabled) {
+            background: var(--primary);
+            color: white;
+            transform: scale(1.1);
+        }
+        /* When mic is actively recording */
+        .mic-btn.recording {
+            background: var(--red);
+            border-color: var(--red);
+            color: white;
+            animation: mic-pulse 1s infinite;
+        }
+        @keyframes mic-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(211,47,47,0.4); }
+            50% { box-shadow: 0 0 0 10px rgba(211,47,47,0); }
+        }
+        /* Offline / disabled state */
+        .mic-btn:disabled {
+            background: #e0e0e0;
+            border-color: #bdbdbd;
+            color: #9e9e9e;
+            cursor: not-allowed;
+        }
+        .mic-offline-warn {
+            font-size: 0.75rem;
+            color: var(--red);
+            margin-top: 0.25rem;
+            display: none; /* shown via JS when offline */
+        }
+        .mic-offline-warn.visible { display: block; }
+
+        /* ── Read Aloud Button ── */
+        .read-aloud-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius-sm);
+            border: 2px solid var(--accent);
+            background: transparent;
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .read-aloud-btn:hover {
+            background: var(--accent);
+            color: white;
+        }
+        .read-aloud-btn.speaking {
+            background: var(--accent);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- ============================================================
+         OFFLINE BANNER — Shown automatically when navigator.onLine is false.
+         Managed via JS event listeners at the bottom.
+    ============================================================ -->
+    <div id="offline-banner" class="offline-banner hidden">
+        <span id="offline-banner-text">⚠️ You are offline — data will be saved locally and synced later</span>
+    </div>
+
+    <!-- ============================================================
+         NAVBAR — Sticky top header with brand and online status dot.
+    ============================================================ -->
+    <nav class="navbar">
+        <a href="../index.html" class="navbar-brand">🏥 SehatSetu</a>
+        <div class="navbar-right">
+            <span class="online-indicator"><span class="status-dot online" id="status-dot"></span> <span id="status-label">Online</span></span>
+        </div>
+    </nav>
+
+    <!-- ============================================================
+         MAIN CONTENT
+    ============================================================ -->
+    <main class="container-sm" style="padding-top: 1.5rem; padding-bottom: 3rem;">
+
+        <!-- ========================================
+             SECTION 1: PIN Login Gate
+             Static offline PIN auth for ASHA workers.
+             Credentials hardcoded in app.js.
+        ======================================== -->
+        <div id="asha-login-gate">
+            <div class="card" style="padding: 2rem;">
+                <h1 class="text-center" style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;" id="login-title">👩‍⚕️ ASHA Worker Login</h1>
+                <p class="text-center" style="color: var(--text-muted); margin-bottom: 1.5rem;" id="login-subtitle">Enter your registered phone number and PIN to access the patient registration form.</p>
+
+                <form id="asha-login-form">
+                    <div class="form-group">
+                        <label for="asha-phone" data-i18n="label_phone">Phone Number</label>
+                        <input type="tel" id="asha-phone" class="form-control" placeholder="e.g. 9067038936" required inputmode="numeric" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="asha-pin" data-i18n="label_pin">4-Digit PIN</label>
+                        <input type="password" id="asha-pin" class="form-control" placeholder="Enter PIN" required maxlength="4" inputmode="numeric" autocomplete="off">
+                    </div>
+                    <div id="asha-error" class="hidden" style="color: var(--red); font-size: 0.875rem; margin-bottom: 1rem; text-align: center;"></div>
+                    <button type="submit" class="btn btn-primary btn-block btn-lg" id="login-btn">🔐 Verify & Enter</button>
+                </form>
+                <p class="text-center mt-2" style="font-size: 0.8rem; color: var(--text-muted);" id="login-offline-note">Works offline — no internet needed to login.</p>
+            </div>
+        </div>
+
+        <!-- ========================================
+             SECTION 2: Patient Registration Form
+             Hidden until ASHA worker is authenticated.
+        ======================================== -->
+        <div id="asha-main" class="hidden">
+
+            <!-- ── Language Toggle (English / ਪੰਜਾਬੀ) ── -->
+            <div class="lang-toggle-bar" title="Switch between English and Punjabi">
+                <span id="lang-en-label" class="active-lang">English</span>
+                <label class="lang-switch" aria-label="Toggle language">
+                    <input type="checkbox" id="lang-toggle">
+                    <span class="lang-slider"></span>
+                </label>
+                <span id="lang-pa-label">ਪੰਜਾਬੀ</span>
+            </div>
+
+            <!-- ── Header Row ── -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <div>
+                    <h1 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.25rem;" id="form-title">Register Patient</h1>
+                    <p style="color: var(--text-muted); font-size: 0.9rem;">
+                        👩‍⚕️ <strong id="asha-name-display">Utkarsha</strong> — <span id="form-subtitle">Fill in patient details. Works offline.</span>
+                    </p>
+                </div>
+                <button class="btn btn-outline" style="padding: 0.4rem 0.8rem; font-size: 0.75rem;" id="logout-btn" onclick="ashaLogout(); location.reload();">Logout</button>
+            </div>
+
+            <!-- ── Read Aloud Button ──
+                 Uses window.speechSynthesis (Web Speech API).
+                 This native browser API works OFFLINE — no internet needed.
+                 It reads the form instructions aloud for low-literacy users.
+            -->
+            <div style="margin-bottom: 0.75rem;">
+                <button type="button" class="read-aloud-btn" id="read-aloud-btn" onclick="readAloud()">
+                    <span id="read-aloud-label">🔊 Read Aloud</span>
+                </button>
+            </div>
+
+            <!-- ── Patient Form ── -->
+            <form id="intake-form" class="card">
+
+                <!-- Patient Name -->
+                <div class="form-group">
+                    <label for="patient-name" data-i18n="label_name">Patient Name *</label>
+                    <input type="text" id="patient-name" class="form-control" data-i18n-placeholder="ph_name" placeholder="Enter patient name" required autocomplete="off">
+                </div>
+
+                <!-- Age -->
+                <div class="form-group">
+                    <label for="patient-age" data-i18n="label_age">Age</label>
+                    <input type="number" id="patient-age" class="form-control" data-i18n-placeholder="ph_age" placeholder="Age" min="0" max="120" inputmode="numeric">
+                </div>
+
+                <!-- Gender -->
+                <div class="form-group">
+                    <label for="patient-gender" data-i18n="label_gender">Gender</label>
+                    <select id="patient-gender" class="form-control">
+                        <option value="" data-i18n="opt_select">Select...</option>
+                        <option value="male" data-i18n="opt_male">Male</option>
+                        <option value="female" data-i18n="opt_female">Female</option>
+                        <option value="other" data-i18n="opt_other">Other</option>
+                    </select>
+                </div>
+
+                <!-- Village — Dropdown with 5 Nabha-area Punjabi villages -->
+                <div class="form-group">
+                    <label for="patient-village" data-i18n="label_village">Village *</label>
+                    <select id="patient-village" class="form-control" required>
+                        <option value="" data-i18n="opt_select_village">Select Village...</option>
+                        <option value="Bhadson">Bhadson (ਭਦਸੋਂ)</option>
+                        <option value="Rohti">Rohti (ਰੋਹਟੀ)</option>
+                        <option value="Amloh">Amloh (ਅਮਲੋਹ)</option>
+                        <option value="Chondhi">Chondhi (ਚੌਂਧੀ)</option>
+                        <option value="Kheri">Kheri (ਖੇੜੀ)</option>
+                    </select>
+                </div>
+
+                <!-- Phone Number -->
+                <div class="form-group">
+                    <label for="patient-phone" data-i18n="label_phone_patient">Phone Number</label>
+                    <input type="tel" id="patient-phone" class="form-control" data-i18n-placeholder="ph_phone" placeholder="+91XXXXXXXXXX" inputmode="tel">
+                </div>
+
+                <!-- Symptoms + Voice Input (Speech-to-Text) -->
+                <div class="form-group">
+                    <label for="patient-symptoms" data-i18n="label_symptoms">Symptoms *</label>
+                    <div class="symptom-input-wrapper">
+                        <textarea id="patient-symptoms" class="form-control" data-i18n-placeholder="ph_symptoms" placeholder="Describe symptoms in detail..." rows="4" required style="padding-right: 60px;"></textarea>
+                        <!-- 🎤 Mic Button — uses webkitSpeechRecognition / SpeechRecognition.
+                             Disabled when offline (speech recognition requires internet). -->
+                        <button type="button" class="mic-btn" id="mic-btn" title="Voice Input" aria-label="Voice input for symptoms">
+                            🎤
+                        </button>
+                    </div>
+                    <!-- Offline warning shown when navigator.onLine === false -->
+                    <p class="mic-offline-warn" id="mic-offline-warn">⚠️ Voice typing requires internet. Please type manually.</p>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="btn btn-primary btn-block btn-lg mt-2" id="submit-btn">
+                    <span id="submit-btn-text">✅ Save Patient Data</span>
+                </button>
+            </form>
+
+            <!-- Offline Queue Link -->
+            <div class="mt-3 text-center">
+                <a href="queue.html" class="btn btn-outline btn-block" id="view-queue-btn">
+                    📋 <span id="queue-link-text">View Offline Queue</span> (<span id="queue-count">0</span>)
+                </a>
+            </div>
+        </div><!-- end #asha-main -->
+    </main>
+
+    <!-- ============================================================
+         SCRIPTS
+         Order matters: app.js (shared utils) → offline-db.js → sync.js
+         Then inline script for page-specific logic.
+    ============================================================ -->
+    <script src="../js/app.js"></script>
+    <script src="../js/offline-db.js"></script>
+    <script src="../js/sync.js"></script>
+    <script>
+    /* ==============================================================
+       FEATURE 2: OFFLINE-FIRST LOCALIZATION (English / Punjabi)
+       ==============================================================
+       Hardcoded dictionary — NO external API calls needed.
+       Switches instantly even when 100% offline.
+       The dictionary maps i18n keys → { en, pa } text values.
+    ============================================================== */
+    const LANG = {
+        // Login gate
+        login_title:        { en: '👩‍⚕️ ASHA Worker Login',         pa: '👩‍⚕️ ਆਸ਼ਾ ਵਰਕਰ ਲੌਗਇਨ' },
+        login_subtitle:     { en: 'Enter your registered phone number and PIN to access the patient registration form.',
+                              pa: 'ਮਰੀਜ਼ ਰਜਿਸਟ੍ਰੇਸ਼ਨ ਫ਼ਾਰਮ ਖੋਲ੍ਹਣ ਲਈ ਆਪਣਾ ਫ਼ੋਨ ਨੰਬਰ ਅਤੇ PIN ਦਰਜ ਕਰੋ।' },
+        login_btn:          { en: '🔐 Verify & Enter',              pa: '🔐 ਪੁਸ਼ਟੀ ਕਰੋ ਅਤੇ ਦਾਖ਼ਲ ਹੋਵੋ' },
+        login_offline_note: { en: 'Works offline — no internet needed to login.',
+                              pa: 'ਔਫ਼ਲਾਈਨ ਕੰਮ ਕਰਦਾ ਹੈ — ਲੌਗਇਨ ਲਈ ਇੰਟਰਨੈੱਟ ਦੀ ਲੋੜ ਨਹੀਂ।' },
+        // Form labels
+        label_phone:        { en: 'Phone Number',                   pa: 'ਫ਼ੋਨ ਨੰਬਰ' },
+        label_pin:          { en: '4-Digit PIN',                    pa: '4-ਅੰਕੀ PIN' },
+        label_name:         { en: 'Patient Name *',                 pa: 'ਮਰੀਜ਼ ਦਾ ਨਾਮ *' },
+        label_age:          { en: 'Age',                            pa: 'ਉਮਰ' },
+        label_gender:       { en: 'Gender',                         pa: 'ਲਿੰਗ' },
+        label_village:      { en: 'Village *',                      pa: 'ਪਿੰਡ *' },
+        label_phone_patient:{ en: 'Phone Number',                   pa: 'ਫ਼ੋਨ ਨੰਬਰ' },
+        label_symptoms:     { en: 'Symptoms *',                     pa: 'ਲੱਛਣ *' },
+        // Placeholders
+        ph_name:            { en: 'Enter patient name',             pa: 'ਮਰੀਜ਼ ਦਾ ਨਾਮ ਲਿਖੋ' },
+        ph_age:             { en: 'Age',                            pa: 'ਉਮਰ' },
+        ph_phone:           { en: '+91XXXXXXXXXX',                  pa: '+91XXXXXXXXXX' },
+        ph_symptoms:        { en: 'Describe symptoms in detail...', pa: 'ਲੱਛਣਾਂ ਬਾਰੇ ਵਿਸਤਾਰ ਨਾਲ ਲਿਖੋ...' },
+        // Select options
+        opt_select:         { en: 'Select...',                      pa: 'ਚੁਣੋ...' },
+        opt_male:           { en: 'Male',                           pa: 'ਮਰਦ' },
+        opt_female:         { en: 'Female',                         pa: 'ਔਰਤ' },
+        opt_other:          { en: 'Other',                          pa: 'ਹੋਰ' },
+        opt_select_village: { en: 'Select Village...',              pa: 'ਪਿੰਡ ਚੁਣੋ...' },
+        // Buttons & headings
+        form_title:         { en: 'Register Patient',               pa: 'ਮਰੀਜ਼ ਰਜਿਸਟਰ ਕਰੋ' },
+        form_subtitle:      { en: 'Fill in patient details. Works offline.',
+                              pa: 'ਮਰੀਜ਼ ਦੀ ਜਾਣਕਾਰੀ ਭਰੋ। ਔਫ਼ਲਾਈਨ ਕੰਮ ਕਰਦਾ ਹੈ।' },
+        submit_btn:         { en: '✅ Save Patient Data',           pa: '✅ ਮਰੀਜ਼ ਡਾਟਾ ਸੇਵ ਕਰੋ' },
+        queue_link:         { en: 'View Offline Queue',             pa: 'ਔਫ਼ਲਾਈਨ ਕਤਾਰ ਵੇਖੋ' },
+        logout_btn:         { en: 'Logout',                         pa: 'ਲੌਗ ਆਊਟ' },
+        read_aloud:         { en: '🔊 Read Aloud',                  pa: '🔊 ਉੱਚੀ ਪੜ੍ਹੋ' },
+        mic_offline:        { en: '⚠️ Voice typing requires internet. Please type manually.',
+                              pa: '⚠️ ਵੌਇਸ ਟਾਈਪਿੰਗ ਲਈ ਇੰਟਰਨੈੱਟ ਚਾਹੀਦਾ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਹੱਥੀਂ ਲਿਖੋ।' },
+        offline_banner:     { en: '⚠️ You are offline — data will be saved locally and synced later',
+                              pa: '⚠️ ਤੁਸੀਂ ਔਫ਼ਲਾਈਨ ਹੋ — ਡਾਟਾ ਲੋਕਲ ਸੇਵ ਹੋਵੇਗਾ ਅਤੇ ਬਾਅਦ ਵਿੱਚ ਸਿੰਕ ਹੋਵੇਗਾ' },
+        // TTS instruction spoken aloud
+        tts_instructions:   {
+            en: 'Welcome to SehatSetu Patient Registration. Please fill in the patient name, age, gender, select the village, enter the phone number, and describe the symptoms. Then press the Save Patient Data button.',
+            pa: 'ਸੇਹਤਸੇਤੂ ਮਰੀਜ਼ ਰਜਿਸਟ੍ਰੇਸ਼ਨ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਮਰੀਜ਼ ਦਾ ਨਾਮ, ਉਮਰ, ਲਿੰਗ, ਪਿੰਡ ਚੁਣੋ, ਫ਼ੋਨ ਨੰਬਰ ਦਰਜ ਕਰੋ, ਅਤੇ ਲੱਛਣ ਲਿਖੋ। ਫਿਰ ਮਰੀਜ਼ ਡਾਟਾ ਸੇਵ ਕਰੋ ਬਟਨ ਦਬਾਓ।'
+        }
+    };
+
+    // Track current language: 'en' or 'pa'
+    let currentLang = localStorage.getItem('sehatsetu_lang') || 'en';
+
+    /**
+     * Apply language to all UI elements.
+     * Finds elements by data-i18n attribute (labels/options) and
+     * by explicit ID mappings (headings, buttons, banners).
+     */
+    function applyLanguage(lang) {
+        currentLang = lang;
+        localStorage.setItem('sehatsetu_lang', lang);
+
+        // Update toggle visual
+        document.getElementById('lang-en-label').classList.toggle('active-lang', lang === 'en');
+        document.getElementById('lang-pa-label').classList.toggle('active-lang', lang === 'pa');
+        document.getElementById('lang-toggle').checked = (lang === 'pa');
+
+        // Update labels via data-i18n attribute
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            if (LANG[key]) el.textContent = LANG[key][lang];
+        });
+
+        // Update placeholders via data-i18n-placeholder attribute
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+            const key = el.getAttribute('data-i18n-placeholder');
+            if (LANG[key]) el.placeholder = LANG[key][lang];
+        });
+
+        // Update elements by ID
+        const idMap = {
+            'login-title': 'login_title',
+            'login-subtitle': 'login_subtitle',
+            'login-btn': 'login_btn',
+            'login-offline-note': 'login_offline_note',
+            'form-title': 'form_title',
+            'form-subtitle': 'form_subtitle',
+            'submit-btn-text': 'submit_btn',
+            'queue-link-text': 'queue_link',
+            'logout-btn': 'logout_btn',
+            'read-aloud-label': 'read_aloud',
+            'mic-offline-warn': 'mic_offline',
+            'offline-banner-text': 'offline_banner'
+        };
+        for (const [elId, key] of Object.entries(idMap)) {
+            const el = document.getElementById(elId);
+            if (el && LANG[key]) el.textContent = LANG[key][lang];
+        }
+
+        // Update mic button to show current language label
+        if (typeof updateMicButtonLabel === 'function') {
+            updateMicButtonLabel();
+        }
+    }
+
+    // Language toggle event listener (checkbox change)
+    document.getElementById('lang-toggle').addEventListener('change', (e) => {
+        applyLanguage(e.target.checked ? 'pa' : 'en');
+    });
+    // Also allow clicking the language labels to toggle
+    document.getElementById('lang-en-label').addEventListener('click', () => {
+        document.getElementById('lang-toggle').checked = false;
+        applyLanguage('en');
+    });
+    document.getElementById('lang-pa-label').addEventListener('click', () => {
+        document.getElementById('lang-toggle').checked = true;
+        applyLanguage('pa');
+    });
+
+    /* ==============================================================
+       FEATURE 3: SMART VOICE INPUT (Speech-to-Text)
+       ==============================================================
+       Uses the Web Speech API (webkitSpeechRecognition).
+       CRITICAL: This API requires an internet connection for most
+       browsers (audio is streamed to cloud for recognition).
+       We detect offline state and disable the mic accordingly.
+    ============================================================== */
+    const micBtn = document.getElementById('mic-btn');
+    const micWarn = document.getElementById('mic-offline-warn');
+    const symptomsField = document.getElementById('patient-symptoms');
+    let recognition = null;
+    let isRecording = false;
+
+    // Check if Speech Recognition is supported
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    // Function to update mic button with current language label
+    function updateMicButtonLabel() {
+        if (isRecording) return; // Don't update while recording
+        const langLabel = (currentLang === 'pa') ? '🎤 ਪਾ' : '🎤 EN';
+        const langFull = (currentLang === 'pa') ? '🎙️ Punjabi Voice Input' : '🎙️ English Voice Input';
+        micBtn.textContent = langLabel;
+        micBtn.title = langFull + ' (Click to use microphone)';
+    }
+
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;     // Single utterance per press
+        recognition.interimResults = true;  // Show interim results for better feedback
+        recognition.lang = 'en-IN';         // Default: English (India)
+
+        // On speech result, append text to symptoms textarea
+        recognition.onresult = (event) => {
+            let finalTranscript = '';
+            let interimTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript;
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            
+            // Show interim results as placeholder feedback
+            if (interimTranscript) {
+                micBtn.textContent = '🔴';
+                micBtn.title = 'Hearing: ' + interimTranscript;
+            }
+            
+            // Append final result to textarea
+            if (finalTranscript) {
+                symptomsField.value += (symptomsField.value ? ' ' : '') + finalTranscript;
+            }
+        };
+
+        recognition.onstart = () => {
+            console.log('Speech recognition started in', recognition.lang === 'pa-IN' ? 'Punjabi' : 'English');
+            isRecording = true;
+            micBtn.classList.add('recording');
+            micBtn.textContent = '🔴';
+            const langMsg = recognition.lang === 'pa-IN' ? 
+                'ਸੁਣ ਰਿਹੇ ਹਾਂ...' : 
+                '🎤 Listening... Speak now';
+            showToast(langMsg, 'success');
+        };
+
+        recognition.onend = () => {
+            console.log('Speech recognition ended');
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            updateMicButtonLabel();
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            updateMicButtonLabel();
+            
+            // Show specific error messages
+            const errorMessages = {
+                'network': '⚠️ No internet connection — Please enable internet for voice input',
+                'not-allowed': '🚫 Microphone access denied. Allow microphone in browser settings (🔒 > Site Settings > Microphone)',
+                'no-speech': 'No speech detected. Speak louder and try again.',
+                'audio-capture': '🎤 Microphone not found. Please connect a microphone.',
+                'aborted': 'Voice input was cancelled.',
+                'service-not-allowed': '❌ Speech service not available. Try using Chrome browser.'
+            };
+            
+            const message = errorMessages[event.error] || `⚠️ Voice error: ${event.error}`;
+            showToast(message, 'error');
+        };
+        
+        recognition.onnomatch = () => {
+            showToast('Could not understand. Please speak more clearly.', 'error');
+        };
+    } else {
+        // Speech recognition not supported - disable button permanently
+        micBtn.disabled = true;
+        micBtn.title = 'Speech recognition not supported in this browser';
+        micBtn.style.opacity = '0.5';
+        console.warn('SpeechRecognition API not supported');
+    }
+
+    // Mic button click handler
+    micBtn.addEventListener('click', () => {
+        if (!SpeechRecognition) {
+            showToast('Speech recognition not supported. Use Chrome or Edge for best results.', 'error');
+            return;
+        }
+        if (!navigator.onLine) {
+            showToast('⚠️ You are offline — Internet required for voice input', 'error');
+            return;
+        }
+        if (isRecording) {
+            // Stop recording
+            recognition.stop();
+            showToast('Voice input stopped', 'success');
+        } else {
+            // **LANGUAGE-AWARE VOICE INPUT**: Set recognition language based on current UI language
+            recognition.lang = (currentLang === 'pa') ? 'pa-IN' : 'en-IN';
+            const langDisplay = (currentLang === 'pa') ? 'Punjabi' : 'English';
+            console.log(`Starting speech recognition in ${langDisplay}`);
+            
+            try {
+                recognition.start();
+                // Note: visual feedback now happens in onstart event
+            } catch (err) {
+                console.error('Failed to start recognition:', err);
+                showToast('Could not start voice input. Please try again or check microphone access.', 'error');
+            }
+        }
+    });
+
+    /**
+     * Update mic button enabled/disabled state based on connectivity.
+     * Called on load and whenever online/offline events fire.
+     */
+    function updateMicState() {
+        if (!navigator.onLine) {
+            micBtn.disabled = true;
+            micWarn.classList.add('visible');
+        } else {
+            micBtn.disabled = false;
+            micWarn.classList.remove('visible');
+            // Refresh the mic button label to show language when coming back online
+            updateMicButtonLabel();
+        }
+    }
+
+    // Listen for online/offline events to toggle mic availability
+    window.addEventListener('online', updateMicState);
+    window.addEventListener('offline', updateMicState);
+    updateMicState(); // Initial check
+
+    /* ==============================================================
+       FEATURE 4: SPEAK ALOUD (Text-to-Speech)
+       ==============================================================
+       For ENGLISH: Uses window.speechSynthesis (native browser API, works offline).
+       For PUNJABI: Uses backend espeak-ng endpoint (/api/tts?lang=pa) since
+                    Windows doesn't have Punjabi voices by default.
+                    espeak-ng is open-source and works fully OFFLINE.
+    ============================================================== */
+    const readAloudBtn = document.getElementById('read-aloud-btn');
+    let ttsAudio = null; // For Punjabi audio playback
+
+    function readAloud() {
+        // If already speaking/playing, stop it
+        if (window.speechSynthesis.speaking) {
+            window.speechSynthesis.cancel();
+            readAloudBtn.classList.remove('speaking');
+            return;
+        }
+        if (ttsAudio && !ttsAudio.paused) {
+            ttsAudio.pause();
+            ttsAudio.currentTime = 0;
+            readAloudBtn.classList.remove('speaking');
+            return;
+        }
+
+        if (currentLang === 'pa') {
+            // PUNJABI: Use backend espeak-ng TTS endpoint
+            readAloudBtn.classList.add('speaking');
+            readAloudBtn.querySelector('span').textContent = '⏳ Loading...';
+
+            // Create audio element and fetch from backend
+            ttsAudio = new Audio(`/api/tts?lang=pa&t=${Date.now()}`);
+            
+            ttsAudio.oncanplaythrough = () => {
+                readAloudBtn.querySelector('span').textContent = LANG.read_aloud[currentLang];
+                ttsAudio.play();
+            };
+            
+            ttsAudio.onended = () => {
+                readAloudBtn.classList.remove('speaking');
+            };
+            
+            ttsAudio.onerror = () => {
+                readAloudBtn.classList.remove('speaking');
+                readAloudBtn.querySelector('span').textContent = LANG.read_aloud[currentLang];
+                showToast('TTS failed — make sure espeak-ng is installed', 'error');
+            };
+
+        } else {
+            // ENGLISH: Use native browser speechSynthesis (works offline)
+            const text = LANG.tts_instructions[currentLang];
+            const utterance = new SpeechSynthesisUtterance(text);
+
+            utterance.lang = 'en-IN';
+            utterance.rate = 0.9;
+            utterance.pitch = 1.0;
+
+            utterance.onstart = () => readAloudBtn.classList.add('speaking');
+            utterance.onend = () => readAloudBtn.classList.remove('speaking');
+            utterance.onerror = () => readAloudBtn.classList.remove('speaking');
+
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+
+    /* ==============================================================
+       ASHA PIN LOGIN GATE
+       ==============================================================
+       Static offline PIN authentication.
+       Credentials in app.js: ASHA_CREDENTIALS
+    ============================================================== */
+    const loginGate = document.getElementById('asha-login-gate');
+    const ashaMain = document.getElementById('asha-main');
+    const ashaLoginForm = document.getElementById('asha-login-form');
+    const ashaError = document.getElementById('asha-error');
+
+    function showIntakeForm() {
+        loginGate.classList.add('hidden');
+        ashaMain.classList.remove('hidden');
+        updateQueueCount();
+    }
+
+    // Auto-login if already authenticated (PIN session persists in localStorage)
+    if (isAshaAuthenticated()) {
+        showIntakeForm();
+    }
+
+    ashaLoginForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        ashaError.classList.add('hidden');
+        const phone = document.getElementById('asha-phone').value.trim();
+        const pin = document.getElementById('asha-pin').value.trim();
+
+        if (ashaLogin(phone, pin)) {
+            showToast(`✅ Welcome, ${ASHA_CREDENTIALS.name}!`);
+            showIntakeForm();
+        } else {
+            ashaError.textContent = '❌ Invalid phone number or PIN. Contact your supervisor.';
+            ashaError.classList.remove('hidden');
+        }
+    });
+
+    /* ==============================================================
+       PATIENT REGISTRATION — Form Submission
+       ==============================================================
+       Online: POST to /api/triage → AI returns priority.
+       Offline: Save to IndexedDB queue → auto-sync later.
+    ============================================================== */
+    const form = document.getElementById('intake-form');
+    const submitBtn = document.getElementById('submit-btn');
+    const queueCountEl = document.getElementById('queue-count');
+
+    async function updateQueueCount() {
+        const count = await getQueueCount();
+        queueCountEl.textContent = count;
+    }
+    updateQueueCount();
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        submitBtn.disabled = true;
+        document.getElementById('submit-btn-text').textContent = '⏳ Processing...';
+
+        const patientData = {
+            name: document.getElementById('patient-name').value.trim(),
+            age: document.getElementById('patient-age').value || null,
+            gender: document.getElementById('patient-gender').value || null,
+            village: document.getElementById('patient-village').value,
+            phone: document.getElementById('patient-phone').value.trim(),
+            symptoms: document.getElementById('patient-symptoms').value.trim()
+        };
+
+        try {
+            if (navigator.onLine) {
+                // Online — send directly to triage API
+                const result = await apiFetch('/api/triage', {
+                    method: 'POST',
+                    body: JSON.stringify(patientData)
+                });
+
+                const priorityLabels = { RED: '🔴 URGENT', YELLOW: '🟡 Moderate', GREEN: '🟢 Mild' };
+                showToast(`Patient registered! Priority: ${priorityLabels[result.priority] || result.priority}`);
+            } else {
+                // Offline — save to IndexedDB
+                await saveToQueue(patientData);
+                await updateQueueCount();
+                showToast('📱 Saved offline — will sync when online');
+            }
+
+            form.reset();
+        } catch (err) {
+            // Fallback — save to offline queue on any API error
+            await saveToQueue(patientData);
+            await updateQueueCount();
+            showToast('📱 Saved to offline queue', 'error');
+        }
+
+        submitBtn.disabled = false;
+        document.getElementById('submit-btn-text').textContent = LANG.submit_btn[currentLang];
+    });
+
+    // Re-update queue count after background auto-sync
+    window.addEventListener('queue-synced', async () => {
+        await updateQueueCount();
+    });
+
+    /* ==============================================================
+       ONLINE / OFFLINE STATUS MANAGEMENT
+       ==============================================================
+       Updates the navbar status dot, offline banner, and mic button
+       whenever the device goes online/offline.
+    ============================================================== */
+    const statusDot = document.getElementById('status-dot');
+    const statusLabel = document.getElementById('status-label');
+    const offlineBanner = document.getElementById('offline-banner');
+
+    function updateOnlineStatus() {
+        if (navigator.onLine) {
+            statusDot.className = 'status-dot online';
+            statusLabel.textContent = 'Online';
+            offlineBanner.classList.add('hidden');
+        } else {
+            statusDot.className = 'status-dot offline';
+            statusLabel.textContent = 'Offline';
+            offlineBanner.classList.remove('hidden');
+        }
+    }
+
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    updateOnlineStatus(); // Initial check on page load
+
+    // Apply saved language preference on load
+    applyLanguage(currentLang);
+    </script>
+</body>
+</html>
